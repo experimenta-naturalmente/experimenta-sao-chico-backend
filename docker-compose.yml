@@ -1,0 +1,70 @@
+# Stack de produção: MinIO + API + Web.
+# Os serviços ficam expostos só em 127.0.0.1. O Traefik que já está no VPS
+# (portas 80 e 443) publica os subdomínios com TLS apontando para estas portas:
+#   api.experimentasaochico.com.br   -> 127.0.0.1:8080
+#   minio.experimentasaochico.com.br -> 127.0.0.1:9010   (S3 / imagens)
+#   console.minio (opcional)         -> 127.0.0.1:9011   (painel MinIO)
+#   experimentasaochico.com.br (web) -> 127.0.0.1:8082
+# 9000 e 9001 ficam com o MinIO do Pró-Mata. 3000 fica com o backend dele.
+services:
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:9010:9000"
+      - "127.0.0.1:9011:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do sleep 2; done;
+      mc mb -p local/$MINIO_BUCKET || true;
+      mc anonymous set download local/$MINIO_BUCKET || true;
+      echo 'MinIO bucket pronto';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+
+  api:
+    image: ${IMAGE_API}
+    restart: unless-stopped
+    depends_on:
+      - minio
+    environment:
+      PORT: "3000"
+      FIREBASE_SERVICE_ACCOUNT: ${FIREBASE_SERVICE_ACCOUNT}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_REGION: ${MINIO_REGION}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      REQUIRE_AUTH: ${REQUIRE_AUTH}
+    ports:
+      - "127.0.0.1:8080:3000"
+
+  web:
+    image: ${IMAGE_WEB}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:80"
+
+volumes:
+  minio-data:

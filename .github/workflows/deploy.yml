@@ -38,6 +38,8 @@ jobs:
         with:
           context: .
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ steps.meta.outputs.image }}:latest
             ${{ steps.meta.outputs.image }}:${{ github.sha }}
